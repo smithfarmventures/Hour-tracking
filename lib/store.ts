@@ -3,7 +3,7 @@
 // Writes are conditional on the etag that was read, so two people saving at
 // the same moment can't silently overwrite each other.
 
-import { BlobNotFoundError, BlobPreconditionFailedError, get, put } from "@vercel/blob";
+import { BlobNotFoundError, BlobPreconditionFailedError, get, head, put } from "@vercel/blob";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { type State, initialState } from "./model";
@@ -14,7 +14,11 @@ const localFile = path.join(process.cwd(), ".data", KEY);
 
 type Loaded = { state: State; etag: string | null };
 
-export class ConflictError extends Error {}
+export class ConflictError extends Error {
+  constructor() {
+    super("Someone else saved at the same moment");
+  }
+}
 
 /** Deployed without a Blob store connected: there is nowhere to save. */
 export class StorageMissingError extends Error {
@@ -33,13 +37,19 @@ export async function loadState(): Promise<Loaded> {
       return { state: initialState(), etag: null };
     }
   }
-  const res = await get(KEY, { access: "private", useCache: false }).catch((e) => {
+  // Take the etag from the Blob API (the form put's ifMatch compares against),
+  // not from the download response, whose etag header differs. Reading it
+  // before the content means a write in between makes our save fail and retry,
+  // never overwrite.
+  const meta = await head(KEY).catch((e) => {
     if (e instanceof BlobNotFoundError) return null;
     throw e;
   });
-  if (!res || res.statusCode !== 200 || !res.stream) return { state: initialState(), etag: null };
+  if (!meta) return { state: initialState(), etag: null };
+  const res = await get(KEY, { access: "private", useCache: false });
+  if (!res || res.statusCode !== 200 || !res.stream) throw new Error(`Couldn't read ${KEY}`);
   const text = await new Response(res.stream).text();
-  return { state: JSON.parse(text), etag: res.blob.etag };
+  return { state: JSON.parse(text), etag: meta.etag };
 }
 
 async function saveState(state: State, etag: string | null): Promise<void> {
