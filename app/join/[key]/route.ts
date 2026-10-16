@@ -11,7 +11,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ key: str
   try {
     const { state } = await loadState();
     const role = roleForKey(state, key);
-    const url = new URL(role ? "/" : "/?link=invalid", req.url);
+    // The nanny gets a one-time welcome the first time a link is opened.
+    const url = new URL(role === "nanny" ? "/?welcome=1" : role ? "/" : "/?link=invalid", req.url);
     if (role) await setAccessCookie(key);
     const res = NextResponse.redirect(url, 303);
     res.headers.set("Cache-Control", "no-store");

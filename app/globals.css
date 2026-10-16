@@ -129,6 +129,10 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
 .form > button { align-self: flex-start; }
 
 .login { width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 12px; text-align: center; }
-.login input { text-align: center; font-size: 1.3rem; letter-spacing: 0.2em; }
+.hello-wave { font-size: 2.4rem; margin: 0; line-height: 1; }
+.hello h1 { font-size: 1.3rem; line-height: 1.3; }
+.hello-steps { list-style: none; padding: 0; margin: 4px 0; text-align: left; display: flex; flex-direction: column; gap: 10px; }
+.hello-steps li { display: flex; gap: 10px; align-items: flex-start; }
+.hello-steps li span:first-child { font-size: 1.2rem; line-height: 1.3; }
 
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; }

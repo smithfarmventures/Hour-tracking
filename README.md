@@ -1,4 +1,4 @@
-# Nanny Hours
+# James Journal
 
 A small web app for agreeing on a nanny's weekly schedule and signing off on hours worked.
 

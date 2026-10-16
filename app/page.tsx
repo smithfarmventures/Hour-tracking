@@ -125,6 +125,11 @@ export default function Page() {
   const app = useAppState();
   const [tab, setTab] = useState<Tab>("week");
   const [week, setWeek] = useState(() => mondayOf(localToday()));
+  const [hello, setHello] = useState(false);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("welcome")) setHello(true);
+  }, []);
 
   if (app.loading) return <main className="center muted">Loading…</main>;
   if (!app.role || !app.state) return <Welcome gate={app.gate} onDone={app.refresh} />;
@@ -132,12 +137,24 @@ export default function Page() {
   const { role, state } = app;
   const me = role === "parent" ? state.settings.parentName : state.settings.nannyName;
 
+  if (hello && role === "nanny") {
+    return (
+      <Hello
+        state={state}
+        onDone={() => {
+          window.history.replaceState(null, "", "/");
+          setHello(false);
+        }}
+      />
+    );
+  }
+
   return (
     <main>
       <header className="top">
         <div>
-          <h1>Nanny Hours</h1>
-          <div className="muted small">Hi, {me}</div>
+          <h1>James Journal</h1>
+          <div className="muted small">Hi, {me}!</div>
         </div>
       </header>
 
@@ -176,6 +193,42 @@ export default function Page() {
   );
 }
 
+// ---------- hello (nanny's first visit from their link) ----------
+
+function Hello({ state, onDone }: { state: State; onDone: () => void }) {
+  const { nannyName } = state.settings;
+  return (
+    <main className="center">
+      <div className="card login hello">
+        <p className="hello-wave">👋</p>
+        <h1>Hi {nannyName}, welcome to James Journal!</h1>
+        <p>
+          This is our little shared spot to line up your hours with James each week, so we can all focus more on James and
+          less on journaling.
+        </p>
+        <ul className="hello-steps">
+          <li>
+            <span>📅</span>
+            <span>Each week we&apos;ll send over the schedule. Tap ✓ if it works, or suggest a change.</span>
+          </li>
+          <li>
+            <span>✏️</span>
+            <span>If a day runs long or short, just jot it down.</span>
+          </li>
+          <li>
+            <span>🤝</span>
+            <span>At the end of the week, we both tap Sign off, and payday is sorted.</span>
+          </li>
+        </ul>
+        <p className="muted small">You&apos;re all set on this phone. No passwords, ever.</p>
+        <button className="primary" onClick={onDone}>
+          Let&apos;s go!
+        </button>
+      </div>
+    </main>
+  );
+}
+
 // ---------- welcome (not signed in on this device) ----------
 
 function Welcome({
@@ -203,15 +256,15 @@ function Welcome({
   return (
     <main className="center">
       <div className="card login">
-        <h1>Nanny Hours</h1>
+        <h1>James Journal</h1>
         {gate.storageError ? (
           <p className="error-text">{gate.storageError}</p>
         ) : gate.setupNeeded ? (
           <>
-            <p>Welcome! Set up the app on this device as the parent.</p>
+            <p>Welcome! Tap below to make this the parents&apos; device.</p>
             <p className="muted small">
-              You&apos;ll stay signed in here. Afterwards, Settings has a personal link to send your nanny. Opening it once signs
-              them in.
+              You&apos;ll stay signed in here. Then head to Settings to send your nanny their personal link. One tap and
+              they&apos;re in.
             </p>
             {error && <div className="error-text">{error}</div>}
             <button className="primary" disabled={busy} onClick={setup}>
@@ -220,8 +273,18 @@ function Welcome({
           </>
         ) : (
           <>
-            <p>{badLink ? "That link is no longer valid." : "This device isn't signed in yet."}</p>
-            <p className="muted small">Open your personal link (from the parents) on this device to get started.</p>
+            <p className="hello-wave">👋</p>
+            {badLink ? (
+              <>
+                <p>Hmm, that link has been swapped for a newer one.</p>
+                <p className="muted small">Ask the family for the latest link and you&apos;ll be all set in one tap.</p>
+              </>
+            ) : (
+              <>
+                <p>Hi there!</p>
+                <p className="muted small">To open James Journal, just tap the personal link the family sent you.</p>
+              </>
+            )}
           </>
         )}
       </div>
@@ -875,7 +938,7 @@ function Sharing({ state, flash }: { state: State; flash: (msg: string) => void 
   async function share(url: string, text: string) {
     if (navigator.share) {
       try {
-        await navigator.share({ title: "Nanny Hours", text, url });
+        await navigator.share({ title: "James Journal", text, url });
         return;
       } catch {
         // cancelled or unsupported: fall back to copying
@@ -905,14 +968,14 @@ function Sharing({ state, flash }: { state: State; flash: (msg: string) => void 
             private: anyone with the link can act as {nanny}.
           </p>
           <div className="row">
-            <button className="primary" onClick={() => share(links.nanny, `Here's your link for tracking hours:`)}>
+            <button className="primary" onClick={() => share(links.nanny, `Hi ${nanny}! Here's your link to James Journal, our shared spot for lining up hours with James. Tap it once and you're in:`)}>
               Send link to {nanny}
             </button>
             <button onClick={() => navigator.clipboard.writeText(links.nanny).then(() => flash("Link copied"))}>Copy</button>
           </div>
           <p className="muted small">To use this app as a parent on another phone or computer, open this link there:</p>
           <div className="row">
-            <button onClick={() => share(links.parent, "Parent link for Nanny Hours:")}>Share parent link</button>
+            <button onClick={() => share(links.parent, "Parent link for James Journal:")}>Share parent link</button>
           </div>
           <p className="muted small">If a link ever gets to the wrong person, reset them. Old links stop working.</p>
           <div className="row">
