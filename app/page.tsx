@@ -56,16 +56,26 @@ function useAppState() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [gate, setGate] = useState<{ setupNeeded: boolean; storageError: string | null }>({
+    setupNeeded: false,
+    storageError: null,
+  });
 
   const refresh = useCallback(async () => {
-    const res = await fetch("/api/state", { cache: "no-store" });
-    if (res.status === 401) {
-      setRole(null);
-      setState(null);
-    } else if (res.ok) {
-      const body = await res.json();
-      setRole(body.role);
-      setState(body.state);
+    try {
+      const res = await fetch("/api/state", { cache: "no-store" });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setRole(body.role);
+        setState(body.state);
+        setGate({ setupNeeded: false, storageError: null });
+      } else if (res.status === 401 || res.status === 503) {
+        setRole(null);
+        setState(null);
+        setGate({ setupNeeded: Boolean(body.setupNeeded), storageError: body.storageMissing ? body.error : null });
+      }
+    } catch {
+      // Offline: keep showing what we have.
     }
     setLoading(false);
   }, []);
@@ -106,7 +116,7 @@ function useAppState() {
     }
   }, []);
 
-  return { role, state, loading, error, setError, busy, act, refresh };
+  return { role, state, loading, error, setError, busy, act, refresh, gate };
 }
 
 // ---------- page ----------
@@ -117,7 +127,7 @@ export default function Page() {
   const [week, setWeek] = useState(() => mondayOf(localToday()));
 
   if (app.loading) return <main className="center muted">Loading…</main>;
-  if (!app.role || !app.state) return <Login onDone={app.refresh} />;
+  if (!app.role || !app.state) return <Welcome gate={app.gate} onDone={app.refresh} />;
 
   const { role, state } = app;
   const me = role === "parent" ? state.settings.parentName : state.settings.nannyName;
@@ -127,17 +137,8 @@ export default function Page() {
       <header className="top">
         <div>
           <h1>Nanny Hours</h1>
-          <div className="muted small">Signed in as {me}</div>
+          <div className="muted small">Hi, {me}</div>
         </div>
-        <button
-          className="link"
-          onClick={async () => {
-            await fetch("/api/logout", { method: "POST" });
-            app.refresh();
-          }}
-        >
-          Sign out
-        </button>
       </header>
 
       <nav className="tabs">
@@ -175,46 +176,55 @@ export default function Page() {
   );
 }
 
-// ---------- login ----------
+// ---------- welcome (not signed in on this device) ----------
 
-function Login({ onDone }: { onDone: () => void }) {
-  const [pin, setPin] = useState("");
+function Welcome({
+  gate,
+  onDone,
+}: {
+  gate: { setupNeeded: boolean; storageError: string | null };
+  onDone: () => void;
+}) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const badLink = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("link") === "invalid";
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  async function setup() {
     setBusy(true);
     setError(null);
-    const res = await fetch("/api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pin }),
-    });
+    const res = await fetch("/api/setup", { method: "POST" });
     setBusy(false);
-    if (res.ok) onDone();
-    else setError((await res.json().catch(() => ({}))).error ?? "Sign in failed");
+    if (res.ok) {
+      window.history.replaceState(null, "", "/");
+      onDone();
+    } else setError((await res.json().catch(() => ({}))).error ?? "Setup failed");
   }
 
   return (
     <main className="center">
-      <form className="card login" onSubmit={submit}>
+      <div className="card login">
         <h1>Nanny Hours</h1>
-        <p className="muted">Enter your PIN to continue.</p>
-        <input
-          type="password"
-          inputMode="numeric"
-          autoComplete="current-password"
-          autoFocus
-          value={pin}
-          onChange={(e) => setPin(e.target.value)}
-          placeholder="PIN"
-        />
-        {error && <div className="error-text">{error}</div>}
-        <button className="primary" disabled={busy || !pin}>
-          {busy ? "Checking…" : "Sign in"}
-        </button>
-      </form>
+        {gate.storageError ? (
+          <p className="error-text">{gate.storageError}</p>
+        ) : gate.setupNeeded ? (
+          <>
+            <p>Welcome! Set up the app on this device as the parent.</p>
+            <p className="muted small">
+              You&apos;ll stay signed in here. Afterwards, Settings has a personal link to send your nanny. Opening it once signs
+              them in.
+            </p>
+            {error && <div className="error-text">{error}</div>}
+            <button className="primary" disabled={busy} onClick={setup}>
+              {busy ? "Setting up…" : "Set up on this device"}
+            </button>
+          </>
+        ) : (
+          <>
+            <p>{badLink ? "That link is no longer valid." : "This device isn't signed in yet."}</p>
+            <p className="muted small">Open your personal link (from the parents) on this device to get started.</p>
+          </>
+        )}
+      </div>
     </main>
   );
 }
@@ -776,6 +786,8 @@ function SettingsView({ state, act, busy }: { state: State; act: ActFn; busy: bo
 
   return (
     <section>
+      <Sharing state={state} flash={flash} />
+
       <form
         className="card form"
         onSubmit={async (e) => {
@@ -845,5 +857,71 @@ function SettingsView({ state, act, busy }: { state: State; act: ActFn; busy: bo
 
       {saved && <div className="toast">{saved}</div>}
     </section>
+  );
+}
+
+function Sharing({ state, flash }: { state: State; flash: (msg: string) => void }) {
+  const [links, setLinks] = useState<{ nanny: string; parent: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const nanny = state.settings.nannyName;
+
+  useEffect(() => {
+    fetch("/api/links", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then(setLinks)
+      .catch(() => setError("Couldn't load the links."));
+  }, []);
+
+  async function share(url: string, text: string) {
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "Nanny Hours", text, url });
+        return;
+      } catch {
+        // cancelled or unsupported: fall back to copying
+      }
+    }
+    await navigator.clipboard.writeText(url);
+    flash("Link copied");
+  }
+
+  async function reset() {
+    if (!confirm(`Make new links? The old ones stop working, and ${nanny} and any other parent devices will need the new link.`)) return;
+    const res = await fetch("/api/links", { method: "POST" });
+    if (res.ok) {
+      setLinks(await res.json());
+      flash("New links created");
+    } else setError("Couldn't reset the links.");
+  }
+
+  return (
+    <div className="card form">
+      <h2>Sharing</h2>
+      {error && <div className="error-text">{error}</div>}
+      {links && (
+        <>
+          <p className="muted small">
+            Send {nanny} a personal link. Opening it once on their phone signs them in for good. Nothing to type. Keep it
+            private: anyone with the link can act as {nanny}.
+          </p>
+          <div className="row">
+            <button className="primary" onClick={() => share(links.nanny, `Here's your link for tracking hours:`)}>
+              Send link to {nanny}
+            </button>
+            <button onClick={() => navigator.clipboard.writeText(links.nanny).then(() => flash("Link copied"))}>Copy</button>
+          </div>
+          <p className="muted small">To use this app as a parent on another phone or computer, open this link there:</p>
+          <div className="row">
+            <button onClick={() => share(links.parent, "Parent link for Nanny Hours:")}>Share parent link</button>
+          </div>
+          <p className="muted small">If a link ever gets to the wrong person, reset them. Old links stop working.</p>
+          <div className="row">
+            <button className="danger" onClick={reset}>
+              Reset links
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }

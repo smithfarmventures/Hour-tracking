@@ -3,7 +3,7 @@
 // Writes are conditional on the etag that was read, so two people saving at
 // the same moment can't silently overwrite each other.
 
-import { BlobPreconditionFailedError, get, put } from "@vercel/blob";
+import { BlobNotFoundError, BlobPreconditionFailedError, get, put } from "@vercel/blob";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { type State, initialState } from "./model";
@@ -16,7 +16,15 @@ type Loaded = { state: State; etag: string | null };
 
 export class ConflictError extends Error {}
 
+/** Deployed without a Blob store connected: there is nowhere to save. */
+export class StorageMissingError extends Error {
+  constructor() {
+    super("Storage isn't connected yet. In Vercel, open this project's Storage tab, create a Blob store, connect it, then redeploy.");
+  }
+}
+
 export async function loadState(): Promise<Loaded> {
+  if (!useBlob && process.env.VERCEL) throw new StorageMissingError();
   if (!useBlob) {
     try {
       const text = await fs.readFile(localFile, "utf8");
@@ -25,7 +33,10 @@ export async function loadState(): Promise<Loaded> {
       return { state: initialState(), etag: null };
     }
   }
-  const res = await get(KEY, { access: "private", useCache: false });
+  const res = await get(KEY, { access: "private", useCache: false }).catch((e) => {
+    if (e instanceof BlobNotFoundError) return null;
+    throw e;
+  });
   if (!res || res.statusCode !== 200 || !res.stream) return { state: initialState(), etag: null };
   const text = await new Response(res.stream).text();
   return { state: JSON.parse(text), etag: res.blob.etag };

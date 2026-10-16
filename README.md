@@ -16,17 +16,14 @@ The **History** tab lists every week and shows year-to-date signed hours and pay
 
 Pay is hours × that week's hourly rate. The rate comes from Settings when the week is created, and the parents can change it per week until the week is signed.
 
-## Sign-in
+## Sign-in (no passwords)
 
-There are no accounts, just two PINs set as environment variables:
+- **First run:** the first person to open the freshly deployed site taps **Set up on this device** and becomes the parent on that device.
+- **Nanny:** in **Settings → Sharing**, tap **Send link to …** to text or copy the nanny's personal link. Opening it once signs that phone in.
+- **More parent devices:** share the parent link from the same section and open it on the other device.
+- **Lost or leaked link:** **Reset links** makes new links and signs out every other device.
 
-| Variable | Purpose |
-| --- | --- |
-| `PARENT_PIN` | Parent login (can propose, edit, and change settings) |
-| `NANNY_PIN` | Nanny login (can approve, request changes, and log hours) |
-| `SESSION_SECRET` | Long random string used to sign login cookies |
-
-Both people stay signed in on their device for about 6 months. Changing a PIN in Vercel (then redeploying) signs that person out everywhere.
+Devices stay signed in for about a year, and the cookie is refreshed each time a link is used. Links are secret 192-bit keys stored with the app data and never shown to the nanny's device. No environment variables are needed.
 
 ## Storage
 
@@ -38,7 +35,6 @@ Without Blob credentials (local development), data lives in `.data/state.json`.
 
 ```bash
 npm install
-cp .env.example .env.local   # set the PINs
 npm run dev                  # http://localhost:3000
 npm test                     # business-rule tests (lib/model.test.ts)
 npm run typecheck

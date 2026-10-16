@@ -1,27 +1,17 @@
-// PIN-based login for exactly two people. Each person's PIN lives in an env var;
-// a successful login sets a signed, httpOnly cookie naming their role. The
-// signing key includes the PIN, so changing a PIN logs that person out everywhere.
+// Link-based access for exactly two roles, with nothing to type. Each role has
+// a secret key stored in the app state; opening /join/<key> once stores that key
+// in a long-lived httpOnly cookie on the device. Resetting the keys revokes
+// every device and every link that was shared.
 
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
-import type { Role } from "./model";
+import type { Role, State } from "./model";
 
-export const COOKIE = "session";
-const MAX_AGE_S = 60 * 60 * 24 * 180; // stay signed in on a phone for ~6 months
+export const COOKIE = "nh_access";
+const MAX_AGE_S = 60 * 60 * 24 * 400; // browsers cap cookies at ~400 days
 
-function pins(): Record<Role, string> {
-  const parent = process.env.PARENT_PIN ?? "";
-  const nanny = process.env.NANNY_PIN ?? "";
-  if (!parent || !nanny || !process.env.SESSION_SECRET) {
-    throw new Error("PARENT_PIN, NANNY_PIN and SESSION_SECRET must be set");
-  }
-  if (parent === nanny) throw new Error("PARENT_PIN and NANNY_PIN must differ");
-  return { parent, nanny };
-}
-
-function sign(role: Role, expires: number): string {
-  const key = process.env.SESSION_SECRET + ":" + pins()[role];
-  return createHmac("sha256", key).update(`${role}.${expires}`).digest("base64url");
+export function newKeys(): NonNullable<State["access"]> {
+  return { parentKey: randomBytes(24).toString("base64url"), nannyKey: randomBytes(24).toString("base64url") };
 }
 
 function safeEqual(a: string, b: string): boolean {
@@ -30,17 +20,15 @@ function safeEqual(a: string, b: string): boolean {
   return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
-export function roleForPin(pin: string): Role | null {
-  const p = pins();
-  // Check both so timing doesn't reveal which one matched.
-  const isParent = safeEqual(pin, p.parent);
-  const isNanny = safeEqual(pin, p.nanny);
+export function roleForKey(state: State, key: string | undefined): Role | null {
+  if (!key || !state.access) return null;
+  const isParent = safeEqual(key, state.access.parentKey);
+  const isNanny = safeEqual(key, state.access.nannyKey);
   return isParent ? "parent" : isNanny ? "nanny" : null;
 }
 
-export async function setSession(role: Role) {
-  const expires = Math.floor(Date.now() / 1000) + MAX_AGE_S;
-  (await cookies()).set(COOKIE, `${role}.${expires}.${sign(role, expires)}`, {
+export async function setAccessCookie(key: string) {
+  (await cookies()).set(COOKIE, key, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
@@ -49,16 +37,6 @@ export async function setSession(role: Role) {
   });
 }
 
-export async function clearSession() {
-  (await cookies()).delete(COOKIE);
-}
-
-export async function currentRole(): Promise<Role | null> {
-  const value = (await cookies()).get(COOKIE)?.value;
-  if (!value) return null;
-  const [role, exp, sig] = value.split(".");
-  if (role !== "parent" && role !== "nanny") return null;
-  const expires = Number(exp);
-  if (!Number.isFinite(expires) || expires < Date.now() / 1000) return null;
-  return safeEqual(sig ?? "", sign(role, expires)) ? role : null;
+export async function roleFromCookie(state: State): Promise<Role | null> {
+  return roleForKey(state, (await cookies()).get(COOKIE)?.value);
 }

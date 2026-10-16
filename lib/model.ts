@@ -37,6 +37,8 @@ export type Settings = { hourlyRate: number; parentName: string; nannyName: stri
 
 export type State = {
   version: 1;
+  /** Secret link keys. Never sent to the browser; see lib/api.ts viewFor. */
+  access?: { parentKey: string; nannyKey: string };
   settings: Settings;
   template: (Shift | null)[]; // 7 entries, Monday first
   weeks: Record<string, Week>;

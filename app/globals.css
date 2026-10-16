@@ -122,6 +122,7 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
 
 .form { display: flex; flex-direction: column; gap: 10px; }
 .form label { display: flex; flex-direction: column; gap: 4px; font-size: 0.9rem; }
+.form label.check { flex-direction: row; align-items: center; gap: 6px; }
 .form .tmplrow { gap: 8px; }
 .form .tmplrow .wd { width: 2.5em; }
 .form .tmplrow input[type="time"] { width: 7.8em; }
