@@ -8,7 +8,10 @@ import {
   type Shift,
   type State,
   type Week,
+  CURRENCIES,
   WEEKDAYS,
+  currencyOf,
+  formatMoney,
   addDays,
   describeShift,
   mondayOf,
@@ -45,7 +48,7 @@ function fmtStamp(iso: string) {
   });
 }
 
-const money = (n: number) => n.toLocaleString(undefined, { style: "currency", currency: "USD" });
+const money = (n: number, currency: string) => formatMoney(n, currency);
 const hrs = (n: number) => `${round2(n)} hr${n === 1 ? "" : "s"}`;
 
 // ---------- data hook ----------
@@ -428,7 +431,7 @@ function WeekDetail({ role, state, week, act, busy }: { role: Role; state: State
         ))}
       </div>
 
-      <Totals role={role} week={week} totals={totals} act={act} busy={busy} />
+      <Totals role={role} week={week} currency={currencyOf(state, week)} totals={totals} act={act} busy={busy} />
 
       {phase === "draft" && role === "parent" && (
         <div className="row">
@@ -664,12 +667,14 @@ function ShiftEditor({
 function Totals({
   role,
   week,
+  currency,
   totals,
   act,
   busy,
 }: {
   role: Role;
   week: Week;
+  currency: string;
   totals: ReturnType<typeof weekTotals>;
   act: ActFn;
   busy: boolean;
@@ -707,9 +712,15 @@ function Totals({
           </form>
         ) : (
           <div className="big">
-            {money(week.rate)}/hr
+            {money(week.rate, currency)}/hr
             {role === "parent" && phaseOf(week) !== "signed" && (
-              <button className="link small" onClick={() => setEditingRate(true)}>
+              <button
+                className="link small"
+                onClick={() => {
+                  setRate(String(week.rate));
+                  setEditingRate(true);
+                }}
+              >
                 edit
               </button>
             )}
@@ -718,7 +729,7 @@ function Totals({
       </div>
       <div>
         <div className="muted small">Pay</div>
-        <div className="big">{money(totals.pay)}</div>
+        <div className="big">{money(totals.pay, currency)}</div>
       </div>
     </div>
   );
@@ -741,6 +752,7 @@ function SignOff({
 }) {
   const lastWorkDay = [...week.days].reverse().find((d) => workedShift(d))?.date ?? week.days[6].date;
   const early = localToday() < lastWorkDay;
+  const currency = currencyOf(state, week);
   const people: [Role, string][] = [
     ["parent", state.settings.parentName],
     ["nanny", state.settings.nannyName],
@@ -757,7 +769,7 @@ function SignOff({
               <span className={s ? "ok-text" : "muted"}>{s ? "✓" : "○"}</span> <strong>{name}</strong>{" "}
               {s ? (
                 <span className="muted small">
-                  signed {fmtStamp(s.at)} for {hrs(s.hours)} / {money(s.pay)}
+                  signed {fmtStamp(s.at)} for {hrs(s.hours)} / {money(s.pay, s.currency ?? currency)}
                 </span>
               ) : (
                 <span className="muted small">not signed yet</span>
@@ -773,10 +785,10 @@ function SignOff({
             className="primary block"
             disabled={busy}
             onClick={() =>
-              confirm(`Sign off on ${hrs(totals.hours)} for ${money(totals.pay)}?`) && act({ type: "signOff", week: week.start })
+              confirm(`Sign off on ${hrs(totals.hours)} for ${money(totals.pay, currency)}?`) && act({ type: "signOff", week: week.start })
             }
           >
-            Sign off: {hrs(totals.hours)} · {money(totals.pay)}
+            Sign off: {hrs(totals.hours)} · {money(totals.pay, currency)}
           </button>
         </>
       )}
@@ -789,9 +801,15 @@ function SignOff({
 function History({ state, open }: { state: State; open: (week: string) => void }) {
   const weeks = useMemo(() => Object.values(state.weeks).sort((a, b) => b.start.localeCompare(a.start)), [state.weeks]);
   const year = String(new Date().getFullYear());
-  const ytd = weeks
-    .filter((w) => phaseOf(w) === "signed" && w.start.startsWith(year))
-    .reduce((acc, w) => ({ hours: acc.hours + weekTotals(w).hours, pay: acc.pay + weekTotals(w).pay }), { hours: 0, pay: 0 });
+  const signedThisYear = weeks.filter((w) => phaseOf(w) === "signed" && w.start.startsWith(year));
+  const ytdHours = signedThisYear.reduce((acc, w) => acc + weekTotals(w).hours, 0);
+  // Pay is summed per currency, in case the currency changed during the year.
+  const ytdPay = new Map<string, number>();
+  for (const w of signedThisYear) {
+    const c = currencyOf(state, w);
+    ytdPay.set(c, (ytdPay.get(c) ?? 0) + weekTotals(w).pay);
+  }
+  if (ytdPay.size === 0) ytdPay.set(currencyOf(state), 0);
   const labels = { draft: "Draft", proposed: "Awaiting approval", confirmed: "Agreed · not signed", signed: "Signed" };
 
   return (
@@ -799,11 +817,15 @@ function History({ state, open }: { state: State; open: (week: string) => void }
       <div className="card totals">
         <div>
           <div className="muted small">{year} signed hours</div>
-          <div className="big">{hrs(ytd.hours)}</div>
+          <div className="big">{hrs(ytdHours)}</div>
         </div>
         <div>
           <div className="muted small">{year} signed pay</div>
-          <div className="big">{money(round2(ytd.pay))}</div>
+          <div className="big">
+            {[...ytdPay].map(([c, pay]) => (
+              <div key={c}>{money(round2(pay), c)}</div>
+            ))}
+          </div>
         </div>
         <a className="button" href="/api/export">
           Export CSV
@@ -824,7 +846,7 @@ function History({ state, open }: { state: State; open: (week: string) => void }
               </div>
               <div className="right">
                 <div>{hrs(t.hours)}</div>
-                <div className="muted small">{money(t.pay)}</div>
+                <div className="muted small">{money(t.pay, currencyOf(state, w))}</div>
               </div>
             </button>
           );
@@ -838,7 +860,11 @@ function History({ state, open }: { state: State; open: (week: string) => void }
 // ---------- settings ----------
 
 function SettingsView({ state, act, busy }: { state: State; act: ActFn; busy: boolean }) {
-  const [settings, setSettings] = useState({ ...state.settings, hourlyRate: String(state.settings.hourlyRate) });
+  const [settings, setSettings] = useState({
+    ...state.settings,
+    currency: currencyOf(state),
+    hourlyRate: String(state.settings.hourlyRate),
+  });
   const [template, setTemplate] = useState<(Shift | null)[]>(state.template);
   const [saved, setSaved] = useState<string | null>(null);
 
@@ -869,7 +895,17 @@ function SettingsView({ state, act, busy }: { state: State; act: ActFn; busy: bo
           <input value={settings.nannyName} onChange={(e) => setSettings({ ...settings, nannyName: e.target.value })} />
         </label>
         <label>
-          Hourly rate (used for new weeks)
+          Pay currency
+          <select value={settings.currency} onChange={(e) => setSettings({ ...settings, currency: e.target.value })}>
+            {CURRENCIES.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Hourly rate ({settings.currency})
           <input
             type="number"
             step="0.01"
@@ -878,6 +914,10 @@ function SettingsView({ state, act, busy }: { state: State; act: ActFn; busy: bo
             onChange={(e) => setSettings({ ...settings, hourlyRate: e.target.value })}
           />
         </label>
+        <p className="muted small">
+          Currency and rate apply to new weeks and to weeks not yet signed. Signed weeks keep the terms they were signed
+          with.
+        </p>
         <button className="primary" disabled={busy}>
           Save
         </button>

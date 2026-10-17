@@ -6,6 +6,8 @@ import {
   type State,
   ActionError,
   addDays,
+  currencyOf,
+  formatMoney,
   applyAction,
   initialState,
   mondayOf,
@@ -170,6 +172,54 @@ test("CSV export includes only signed weeks", () => {
   );
   const lines = signedWeeksCsv(s).trim().split("\n");
   assert.equal(lines.length, 1 + 7 + 1);
-  assert.match(lines[1], /^2026-10-19,2026-10-19,Mon,9am–5pm,09:00,17:00,8,25.00,200.00,/);
-  assert.match(lines[8], /TOTAL,,,,40,25.00,1000.00/);
+  assert.match(lines[1], /^2026-10-19,2026-10-19,Mon,9am–5pm,09:00,17:00,8,USD,25.00,200.00,/);
+  assert.match(lines[8], /TOTAL,,,,40,USD,25.00,1000.00/);
+});
+
+test("currency: in-progress weeks follow settings, signed weeks stay frozen", () => {
+  let s = run(
+    withTemplateWeek(),
+    ["parent", { type: "sendWeek", week: WEEK }],
+    ["nanny", { type: "approveAll", week: WEEK }],
+    ["parent", { type: "signOff", week: WEEK }],
+    ["nanny", { type: "signOff", week: WEEK }],
+    ["parent", { type: "createWeek", week: "2026-10-26", fromTemplate: true }],
+  );
+  assert.equal(currencyOf(s, s.weeks[WEEK]), "USD");
+  s = run(s, [
+    "parent",
+    { type: "saveSettings", settings: { hourlyRate: 60, currency: "ILS", parentName: "Smiths", nannyName: "Amy" } },
+  ]);
+  // Signed week unchanged.
+  assert.equal(currencyOf(s, s.weeks[WEEK]), "USD");
+  assert.equal(s.weeks[WEEK].rate, 25);
+  // Draft week picked up the new currency and the new default rate.
+  assert.equal(currencyOf(s, s.weeks["2026-10-26"]), "ILS");
+  assert.equal(s.weeks["2026-10-26"].rate, 60);
+  assert.equal(weekTotals(s.weeks["2026-10-26"]).pay, 2400);
+  assert.match(signedWeeksCsv(s), /TOTAL,,,,40,USD,25.00,1000.00/);
+});
+
+test("currency: a custom week rate isn't overwritten, and a change clears partial sign-offs", () => {
+  let s = run(
+    withTemplateWeek(),
+    ["parent", { type: "setRate", week: WEEK, rate: 30 }],
+    ["parent", { type: "sendWeek", week: WEEK }],
+    ["nanny", { type: "approveAll", week: WEEK }],
+    ["nanny", { type: "signOff", week: WEEK }],
+    ["parent", { type: "saveSettings", settings: { hourlyRate: 60, currency: "ILS", parentName: "Smiths", nannyName: "Amy" } }],
+  );
+  assert.equal(s.weeks[WEEK].rate, 30);
+  assert.equal(currencyOf(s, s.weeks[WEEK]), "ILS");
+  assert.equal(s.weeks[WEEK].signoffs.nanny, null);
+});
+
+test("currency: validation and formatting", () => {
+  const s = withTemplateWeek();
+  assert.throws(
+    () => applyAction(s, "parent", { type: "saveSettings", settings: { hourlyRate: 1, currency: "XYZ", parentName: "a", nannyName: "b" } }, NOW),
+    /Unsupported currency/,
+  );
+  assert.equal(formatMoney(1000, "ILS"), "₪1,000.00");
+  assert.equal(formatMoney(1000, "USD"), "$1,000.00");
 });

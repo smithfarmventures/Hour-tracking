@@ -60,7 +60,7 @@ button.primary { background: var(--accent); color: var(--accent-text); border-co
 button.danger { color: var(--danger); }
 button.link { border: none; background: none; color: var(--accent); padding: 4px 6px; min-height: 0; }
 button.block { width: 100%; margin: 8px 0; }
-input {
+input, select {
   font: inherit; font-size: 16px; padding: 8px 10px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--bg); color: var(--text); min-width: 0;
 }

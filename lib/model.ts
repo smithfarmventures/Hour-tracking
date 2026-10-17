@@ -20,20 +20,41 @@ export type Day = {
   worked: WorkedOverride | null; // actual hours when they differed from the schedule
 };
 
-export type Signoff = { at: string; hours: number; pay: number };
+export type Signoff = { at: string; hours: number; pay: number; currency?: string };
 
 export type LogEntry = { at: string; by: Role; text: string };
 
 export type Week = {
   start: string; // Monday, YYYY-MM-DD
   rate: number; // hourly rate for this week
+  currency?: string; // ISO code; unset on weeks created before currencies existed
   sentAt: string | null; // when the parent sent the proposal
   days: Day[]; // always 7, Monday first
   signoffs: { parent: Signoff | null; nanny: Signoff | null };
   log: LogEntry[];
 };
 
-export type Settings = { hourlyRate: number; parentName: string; nannyName: string };
+export type Settings = { hourlyRate: number; currency?: string; parentName: string; nannyName: string };
+
+export const CURRENCIES = [
+  { code: "ILS", label: "Israeli shekel (₪)" },
+  { code: "USD", label: "US dollar ($)" },
+  { code: "EUR", label: "Euro (€)" },
+  { code: "GBP", label: "British pound (£)" },
+  { code: "CAD", label: "Canadian dollar (CA$)" },
+  { code: "AUD", label: "Australian dollar (A$)" },
+] as const;
+
+export const DEFAULT_CURRENCY = "USD";
+
+/** The currency a week is paid in: its own once set, else the current setting. */
+export function currencyOf(state: Pick<State, "settings">, week?: Week): string {
+  return week?.currency ?? state.settings.currency ?? DEFAULT_CURRENCY;
+}
+
+export function formatMoney(amount: number, currency: string): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount);
+}
 
 export type State = {
   version: 1;
@@ -160,9 +181,14 @@ function checkNote(note: unknown): string {
   return note.trim().slice(0, 500);
 }
 
+function checkCurrency(code: unknown): string {
+  if (!CURRENCIES.some((c) => c.code === code)) throw new ActionError("Unsupported currency");
+  return code as string;
+}
+
 function checkRate(rate: unknown): number {
-  if (typeof rate !== "number" || !Number.isFinite(rate) || rate < 0 || rate > 1000) {
-    throw new ActionError("Rate must be a number between 0 and 1000");
+  if (typeof rate !== "number" || !Number.isFinite(rate) || rate < 0 || rate > 10000) {
+    throw new ActionError("Rate must be a number between 0 and 10,000");
   }
   return round2(rate);
 }
@@ -238,6 +264,7 @@ export function applyAction(prev: State, role: Role, action: Action, now: string
       const week: Week = {
         start,
         rate: state.settings.hourlyRate,
+        currency: currencyOf(state),
         sentAt: null,
         days: Array.from({ length: 7 }, (_, i) => ({
           date: addDays(start, i),
@@ -389,7 +416,7 @@ export function applyAction(prev: State, role: Role, action: Action, now: string
       const rate = checkRate(action.rate);
       if (rate === week.rate) return state;
       week.rate = rate;
-      log(week, `Set the rate to $${rate.toFixed(2)}/hr`);
+      log(week, `Set the rate to ${formatMoney(rate, currencyOf(state, week))}/hr`);
       clearSignoffs(week, now, role);
       return state;
     }
@@ -401,8 +428,10 @@ export function applyAction(prev: State, role: Role, action: Action, now: string
       if (phase !== "confirmed") throw new ActionError("Every day must be approved before signing off");
       if (week.signoffs[role]) throw new ActionError("You've already signed off");
       const { hours, pay } = weekTotals(week);
-      week.signoffs[role] = { at: now, hours, pay };
-      log(week, `Signed off on ${hours} hrs ($${pay.toFixed(2)})`);
+      const currency = currencyOf(state, week);
+      week.currency = currency; // freeze what this signature is for
+      week.signoffs[role] = { at: now, hours, pay, currency };
+      log(week, `Signed off on ${hours} hrs (${formatMoney(pay, currency)})`);
       return state;
     }
 
@@ -418,11 +447,30 @@ export function applyAction(prev: State, role: Role, action: Action, now: string
     case "saveSettings": {
       requireRole(role, "parent");
       const s = action.settings ?? ({} as Settings);
-      state.settings = {
+      const prevRate = state.settings.hourlyRate;
+      const next: Settings = {
         hourlyRate: checkRate(s.hourlyRate),
+        currency: checkCurrency(s.currency ?? currencyOf(state)),
         parentName: checkName(s.parentName, state.settings.parentName),
         nannyName: checkName(s.nannyName, state.settings.nannyName),
       };
+      state.settings = next;
+      // Weeks still in progress follow the new pay terms; signed weeks never change.
+      for (const week of Object.values(state.weeks)) {
+        if (phaseOf(week) === "signed") continue;
+        let changed = false;
+        if (currencyOf(state, week) !== next.currency) {
+          week.currency = next.currency;
+          log(week, `Changed the currency to ${next.currency}`);
+          changed = true;
+        }
+        if (next.hourlyRate !== prevRate && week.rate === prevRate) {
+          week.rate = next.hourlyRate;
+          log(week, `Set the rate to ${formatMoney(week.rate, next.currency!)}/hr`);
+          changed = true;
+        }
+        if (changed) clearSignoffs(week, now, role);
+      }
       return state;
     }
 
@@ -448,6 +496,7 @@ export function signedWeeksCsv(state: State): string {
     "Worked start",
     "Worked end",
     "Hours",
+    "Currency",
     "Rate",
     "Pay",
     "Note",
@@ -470,6 +519,7 @@ export function signedWeeksCsv(state: State): string {
         shift?.start ?? "",
         shift?.end ?? "",
         hours,
+        currencyOf(state, w),
         w.rate.toFixed(2),
         (hours * w.rate).toFixed(2),
         d.worked?.note ?? "",
@@ -478,7 +528,7 @@ export function signedWeeksCsv(state: State): string {
       ]);
     });
     const t = weekTotals(w);
-    rows.push([w.start, "", "TOTAL", "", "", "", t.hours, w.rate.toFixed(2), t.pay.toFixed(2), "", "", ""]);
+    rows.push([w.start, "", "TOTAL", "", "", "", t.hours, currencyOf(state, w), w.rate.toFixed(2), t.pay.toFixed(2), "", "", ""]);
   }
   return rows.map((r) => r.map(csvCell).join(",")).join("\n") + "\n";
 }

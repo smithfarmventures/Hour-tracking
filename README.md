@@ -14,7 +14,7 @@ Any change to hours after someone signs clears both signatures, so each signatur
 
 The **History** tab lists every week and shows year-to-date signed hours and pay. **Export CSV** downloads every fully signed week, day by day, for payroll and tax records.
 
-Pay is hours × that week's hourly rate. The rate comes from Settings when the week is created, and the parents can change it per week until the week is signed.
+Pay is hours × that week's hourly rate, in the currency chosen in Settings: Israeli shekels, US dollars, euros, pounds, or Canadian or Australian dollars. Changing the currency or rate updates weeks that aren't signed yet (a week with a custom rate keeps it). Signed weeks keep the terms they were signed with.
 
 ## Sign-in (no passwords)
 
