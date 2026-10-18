@@ -34,7 +34,14 @@ export type Week = {
   log: LogEntry[];
 };
 
-export type Settings = { hourlyRate: number; currency?: string; parentName: string; nannyName: string };
+export type Settings = {
+  hourlyRate: number;
+  currency?: string;
+  /** IANA zone the schedule's times are in, for the calendar feed. */
+  timeZone?: string;
+  parentName: string;
+  nannyName: string;
+};
 
 export const CURRENCIES = [
   { code: "ILS", label: "Israeli shekel (₪)" },
@@ -59,7 +66,7 @@ export function formatMoney(amount: number, currency: string): string {
 export type State = {
   version: 1;
   /** Secret link keys. Never sent to the browser; see lib/api.ts viewFor. */
-  access?: { parentKey: string; nannyKey: string };
+  access?: { parentKey: string; nannyKey: string; calendarKey?: string };
   settings: Settings;
   template: (Shift | null)[]; // 7 entries, Monday first
   weeks: Record<string, Week>;
@@ -82,7 +89,8 @@ export type Action =
   | { type: "setRate"; week: string; rate: number }
   | { type: "signOff"; week: string }
   | { type: "saveTemplate"; template: (Shift | null)[] }
-  | { type: "saveSettings"; settings: Settings };
+  | { type: "saveSettings"; settings: Settings }
+  | { type: "setTimeZone"; timeZone: string };
 
 export class ActionError extends Error {}
 
@@ -179,6 +187,16 @@ function checkNote(note: unknown): string {
   if (note === undefined || note === null) return "";
   if (typeof note !== "string") throw new ActionError("Invalid note");
   return note.trim().slice(0, 500);
+}
+
+export function isValidTimeZone(tz: unknown): tz is string {
+  if (typeof tz !== "string" || !tz || tz.length > 64) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function checkCurrency(code: unknown): string {
@@ -451,6 +469,7 @@ export function applyAction(prev: State, role: Role, action: Action, now: string
       const next: Settings = {
         hourlyRate: checkRate(s.hourlyRate),
         currency: checkCurrency(s.currency ?? currencyOf(state)),
+        timeZone: isValidTimeZone(s.timeZone) ? s.timeZone : state.settings.timeZone,
         parentName: checkName(s.parentName, state.settings.parentName),
         nannyName: checkName(s.nannyName, state.settings.nannyName),
       };
@@ -471,6 +490,13 @@ export function applyAction(prev: State, role: Role, action: Action, now: string
         }
         if (changed) clearSignoffs(week, now, role);
       }
+      return state;
+    }
+
+    case "setTimeZone": {
+      requireRole(role, "parent");
+      if (!isValidTimeZone(action.timeZone)) throw new ActionError("Unknown time zone");
+      state.settings.timeZone = action.timeZone;
       return state;
     }
 

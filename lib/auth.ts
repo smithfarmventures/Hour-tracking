@@ -11,10 +11,11 @@ export const COOKIE = "nh_access";
 const MAX_AGE_S = 60 * 60 * 24 * 400; // browsers cap cookies at ~400 days
 
 export function newKeys(): NonNullable<State["access"]> {
-  return { parentKey: randomBytes(24).toString("base64url"), nannyKey: randomBytes(24).toString("base64url") };
+  const key = () => randomBytes(24).toString("base64url");
+  return { parentKey: key(), nannyKey: key(), calendarKey: key() };
 }
 
-function safeEqual(a: string, b: string): boolean {
+export function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
   return ab.length === bb.length && timingSafeEqual(ab, bb);

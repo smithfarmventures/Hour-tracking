@@ -22,7 +22,7 @@ import {
   workedShift,
 } from "@/lib/model";
 
-type Tab = "week" | "history" | "settings";
+type Tab = "week" | "history" | "settings" | "calendar";
 
 // ---------- formatting ----------
 
@@ -134,6 +134,14 @@ export default function Page() {
     if (new URLSearchParams(window.location.search).get("welcome")) setHello(true);
   }, []);
 
+  // Calendar times need the family's time zone: take it from the parent's device once.
+  const needsTimeZone = app.role === "parent" && app.state !== null && !app.state.settings.timeZone;
+  useEffect(() => {
+    if (!needsTimeZone) return;
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (timeZone) app.act({ type: "setTimeZone", timeZone });
+  }, [needsTimeZone]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (app.loading) return <main className="center muted">Loading…</main>;
   if (!app.role || !app.state) return <Welcome gate={app.gate} onDone={app.refresh} />;
 
@@ -159,6 +167,9 @@ export default function Page() {
           <h1>James Journal</h1>
           <div className="muted small">Hi, {me}!</div>
         </div>
+        <button className={tab === "calendar" ? "primary" : ""} onClick={() => setTab(tab === "calendar" ? "week" : "calendar")}>
+          📅 Calendar
+        </button>
       </header>
 
       <nav className="tabs">
@@ -192,6 +203,7 @@ export default function Page() {
         />
       )}
       {tab === "settings" && role === "parent" && <SettingsView state={state} act={app.act} busy={app.busy} />}
+      {tab === "calendar" && <CalendarView state={state} />}
     </main>
   );
 }
@@ -857,12 +869,113 @@ function History({ state, open }: { state: State; open: (week: string) => void }
   );
 }
 
+// ---------- calendar ----------
+
+function timeZones(current?: string): string[] {
+  let all: string[] = [];
+  try {
+    all = (Intl as unknown as { supportedValuesOf(k: string): string[] }).supportedValuesOf("timeZone");
+  } catch {
+    // older browsers: just offer the current one
+  }
+  const mine = current || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return all.includes(mine) ? all : [mine, ...all];
+}
+
+function CalendarView({ state }: { state: State }) {
+  const [links, setLinks] = useState<{ https: string; webcal: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/calendar", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then(setLinks)
+      .catch(() => setError("Couldn't load the calendar link. Please try again."));
+  }, []);
+
+  const name = encodeURIComponent("James Journal");
+  const copy = async () => {
+    if (!links) return;
+    await navigator.clipboard.writeText(links.https);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
+
+  return (
+    <section>
+      <div className="card form">
+        <h2>📅 Add to your calendar</h2>
+        <p>
+          Subscribe once and every approved day with {state.settings.nannyName} shows up in your calendar
+          automatically. If plans change, the calendar updates too.
+        </p>
+        {error && <div className="error-text">{error}</div>}
+        {links && (
+          <>
+            <a
+              className="button primary"
+              href={`https://calendar.google.com/calendar/render?cid=${encodeURIComponent(links.webcal)}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Add to Google Calendar
+            </a>
+            <a
+              className="button primary"
+              href={`https://outlook.live.com/calendar/0/addfromweb?url=${encodeURIComponent(links.https)}&name=${name}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Add to Outlook
+            </a>
+            <a
+              className="button"
+              href={`https://outlook.office.com/calendar/0/addfromweb?url=${encodeURIComponent(links.https)}&name=${name}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Add to Outlook (work or school account)
+            </a>
+            <a className="button" href={links.webcal}>
+              Add to iPhone / Apple Calendar
+            </a>
+            <button onClick={copy}>{copied ? "Copied!" : "Copy calendar link"}</button>
+          </>
+        )}
+      </div>
+
+      <div className="card">
+        <h2>If a button doesn&apos;t work</h2>
+        <p className="muted small">
+          Copy the calendar link above, then on a computer:
+        </p>
+        <ul className="small">
+          <li>
+            <strong>Google Calendar:</strong> next to &ldquo;Other calendars&rdquo; tap <strong>+</strong> →{" "}
+            <strong>From URL</strong> → paste → <strong>Add calendar</strong>.
+          </li>
+          <li>
+            <strong>Outlook:</strong> <strong>Add calendar</strong> → <strong>Subscribe from web</strong> → paste →{" "}
+            <strong>Import</strong>.
+          </li>
+        </ul>
+        <p className="muted small">
+          Google and Outlook check for updates every few hours, so a change can take a little while to appear. Keep the
+          link private: anyone with it can see the schedule.
+        </p>
+      </div>
+    </section>
+  );
+}
+
 // ---------- settings ----------
 
 function SettingsView({ state, act, busy }: { state: State; act: ActFn; busy: boolean }) {
   const [settings, setSettings] = useState({
     ...state.settings,
     currency: currencyOf(state),
+    timeZone: state.settings.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
     hourlyRate: String(state.settings.hourlyRate),
   });
   const [template, setTemplate] = useState<(Shift | null)[]>(state.template);
@@ -913,6 +1026,16 @@ function SettingsView({ state, act, busy }: { state: State; act: ActFn; busy: bo
             value={settings.hourlyRate}
             onChange={(e) => setSettings({ ...settings, hourlyRate: e.target.value })}
           />
+        </label>
+        <label>
+          Time zone (for calendar times)
+          <select value={settings.timeZone ?? ""} onChange={(e) => setSettings({ ...settings, timeZone: e.target.value })}>
+            {timeZones(settings.timeZone).map((tz) => (
+              <option key={tz} value={tz}>
+                {tz.replace(/_/g, " ")}
+              </option>
+            ))}
+          </select>
         </label>
         <p className="muted small">
           Currency and rate apply to new weeks and to weeks not yet signed. Signed weeks keep the terms they were signed

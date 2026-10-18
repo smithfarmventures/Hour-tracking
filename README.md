@@ -16,6 +16,10 @@ The **History** tab lists every week and shows year-to-date signed hours and pay
 
 Pay is hours × that week's hourly rate, in the currency chosen in Settings: Israeli shekels, US dollars, euros, pounds, or Canadian or Australian dollars. Changing the currency or rate updates weeks that aren't signed yet (a week with a custom rate keeps it). Signed weeks keep the terms they were signed with.
 
+## Calendar
+
+Tap **📅 Calendar** to subscribe to a private calendar feed of approved days. There are one-tap buttons for Google Calendar, Outlook (personal or work) and Apple Calendar, plus a link to copy. Events follow the schedule automatically: changed, cancelled and longer-than-planned days update on the next refresh. Google and Outlook re-check subscribed calendars every few hours. Times use the family's time zone, which is taken from the parent's device and can be changed in Settings. **Reset links** also replaces the calendar link.
+
 ## Sign-in (no passwords)
 
 - **First run:** the first person to open the freshly deployed site taps **Set up on this device** and becomes the parent on that device.
